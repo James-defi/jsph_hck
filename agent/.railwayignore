@@ -1,0 +1,12 @@
+# Never ship local secrets, virtualenvs, caches or live-run diagnostics.
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+data/
+*.log

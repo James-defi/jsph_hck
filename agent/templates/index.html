@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="ru" class="has-globe">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Джарвел Upgrade — агент для синхронной поездки группы">
+  <title>Джарвел Upgrade</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='styles.css') }}?v=8">
+  <link rel="stylesheet" href="{{ url_for('static', path='globe.css') }}?v=10">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+    }
+  }
+  </script>
+</head>
+<body class="has-globe">
+{% macro mode_icon(mode) -%}
+{%- set text = (mode or '')|lower -%}
+{%- if 'поезд' in text or 'rail' in text or 'train' in text -%}🚆
+{%- elif 'автобус' in text or 'bus' in text -%}🚌
+{%- else -%}✈️
+{%- endif -%}
+{%- endmacro %}
+{% macro wait_line(wait, transfer) -%}
+{%- set text = (wait or '')|trim -%}
+{%- if text -%}
+  {%- if 'прям' in text or 'стыковки нет' in text or text.lower().startswith('пересад') -%}
+    {{ text }}
+  {%- elif transfer -%}
+    Пересадка: {{ text }}
+  {%- else -%}
+    {{ text }}
+  {%- endif -%}
+{%- endif -%}
+{%- endmacro %}
+{% macro leg_line(leg) -%}
+{{ mode_icon(leg.mode) }} {{ leg.line or ((leg.route or '') ~ (' · ' ~ leg.time if leg.time else '')) }}
+{%- endmacro %}
+{% macro scenario_price(scenario) -%}
+{%- set ns = namespace(value='') -%}
+{%- for metric in scenario.metrics or [] -%}
+  {%- if metric.label in ['Итого', 'Цена'] -%}{%- set ns.value = metric.value -%}{%- endif -%}
+{%- endfor -%}
+{%- if not ns.value and scenario.metrics -%}{%- set ns.value = scenario.metrics[0].value -%}{%- endif -%}
+{{- ns.value -}}
+{%- endmacro %}
+
+<div class="workspace">
+  <section class="chat-panel" id="chat-panel" aria-labelledby="page-title">
+    <header class="chat-head">
+      <a class="brand" href="/" aria-label="Джарвел Upgrade — на главную">
+        <span class="brand-mark" aria-hidden="true">JARVEL</span>
+        <span class="brand-product">Upgrade <b>GroupSync</b></span>
+      </a>
+      <p class="chat-note">Не оформляет и не оплачивает билеты</p>
+    </header>
+
+    <div class="chat-log" id="chat-log">
+      {% if not query %}
+      <div class="onboarding">
+        <h1 id="page-title">Скажите, как едете</h1>
+        <p>Текстом или голосом: направление, даты, конкретные рейсы, пересадку, багаж, сколько часов ждать между рейсами. Агент подберёт варианты на Туту.</p>
+        <ul class="onboarding-points">
+          <li>Можно что угодно — один человек, свои рейсы и свои условия.</li>
+          <li>Можно группой: один диктует за всех, кто откуда едет и в каком аэропорту встретиться. Соберётся общий маршрут.</li>
+        </ul>
+        <div class="examples" aria-label="Примеры запросов">
+          <span>Попробовать:</span>
+          <button class="example-query" type="button" data-query="Трое: Москва, Петербург и Екатеринбург. Встретиться в IST и лететь одним рейсом в Лондон; ждать 2–5 часов.">✈️ Группа через IST</button>
+          <button class="example-query" type="button" data-query="Нас четверо из Москвы, Калуги, Выборга и Казани. Нужно встретиться в Петербурге до 15:00 и ехать дальше вместе.">🚆 Встреча на поезде</button>
+          <button class="example-query" type="button" data-query="Один человек, автобус Казань → Москва, вечерний рейс.">🚌 Казань → Москва</button>
+        </div>
+      </div>
+      {% else %}
+      <h1 id="page-title" class="visually-hidden">Найти билеты</h1>
+      {% endif %}
+
+      {% if query %}
+      <div class="bubble bubble-user">{{ query }}</div>
+      {% endif %}
+
+      {% if error %}
+      <article class="bubble bubble-assistant">
+        <section class="notice notice-error" role="alert">
+          <strong>Не получилось выполнить запрос.</strong> {{ error }}
+        </section>
+      </article>
+      {% endif %}
+
+      {% if result %}
+      <article class="bubble bubble-assistant">
+        <p class="chat-copy">{{ result.summary }}</p>
+        {% if result.timeline %}
+        <p class="chat-copy">Как едут:</p>
+        <ul class="chat-list">
+          {% for traveler in result.timeline %}
+          <li>
+            <div class="person-line">{{ traveler.person }}</div>
+            {% for leg in traveler.legs %}
+              {% if loop.last and traveler.wait and traveler.legs|length > 1 %}
+              <div class="wait-line">{{ wait_line(traveler.wait, true) }}</div>
+              {% endif %}
+              <div class="leg-line">{{ leg_line(leg) }}</div>
+            {% endfor %}
+            {% if traveler.wait and traveler.legs|length <= 1 %}
+            <div class="wait-line">{{ wait_line(traveler.wait, false) }}</div>
+            {% endif %}
+          </li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+        {% if result.scenarios %}
+        {% set offers = namespace(has_link=false) %}
+        <p class="chat-copy">Варианты:</p>
+        <ul class="chat-list">
+          {% for scenario in result.scenarios %}
+          {% set price = scenario_price(scenario) %}
+          {% set scenario_offers = namespace(has_link=false) %}
+          <li>
+            <div>{{ scenario.title }}{% if price %} — {{ price }}{% endif %}</div>
+            {% for unit in scenario.booking_units or [] %}
+              {% for tariff in unit.tariffs or [] %}
+                {% if tariff.variant_id %}
+                {% set offers.has_link = true %}
+                {% set scenario_offers.has_link = true %}
+                <div>
+                  <a class="offer-link" href="#" data-run-id="{{ result.run_id }}" data-component-ref="{{ unit.component_ref }}" data-variant-id="{{ tariff.variant_id }}">{{ unit.title }}{% if tariff.name %} · {{ tariff.name }}{% endif %}{% if tariff.price %} — {{ tariff.price }}{% endif %} ↗</a>
+                </div>
+                {% if tariff.details %}
+                <div class="fare-note">{% for item in tariff.details %}{{ item }}{% if not loop.last %} · {% endif %}{% endfor %}</div>
+                {% endif %}
+                {% endif %}
+              {% endfor %}
+            {% endfor %}
+            {% if not scenario_offers.has_link %}
+              {% for unit in scenario.booking_units or [] %}
+                {% if unit.handoff_note %}<div>{{ unit.handoff_note }}</div>{% endif %}
+              {% endfor %}
+              {% if scenario.subtitle %}<div>{{ scenario.subtitle }}</div>{% endif %}
+              {% if scenario.safety_reason and scenario.safety_reason != scenario.subtitle %}<div>{{ scenario.safety_reason }}</div>{% endif %}
+            {% endif %}
+          </li>
+          {% endfor %}
+        </ul>
+        {% if offers.has_link %}
+        <p class="chat-footnote">Ссылка открывает Туту. Это не бронь: если билета уже нет или нет активной сессии, может открыться общая выдача. Перед оплатой проверьте рейс, цену и пассажиров.</p>
+        {% endif %}
+        {% endif %}
+        {% if result.rejection_summary %}
+        <p class="chat-footnote">{{ result.rejection_summary }}</p>
+        {% endif %}
+        <p class="offer-status" aria-live="polite"></p>
+      </article>
+      {% endif %}
+    </div>
+
+    <form class="composer" action="/search" method="post">
+      <input type="hidden" name="conversation_id" id="conversation-id" value="{{ conversation_id }}">
+      <label for="query">Запрос поездки</label>
+      <textarea id="query" name="query" rows="3" maxlength="6000" required
+        placeholder="Куда едем: самолёт, поезд или автобус. Кто едет и откуда.">{{ query }}</textarea>
+      <div class="composer-actions">
+        <button class="primary-button" type="submit">Найти билеты</button>
+        <button class="mic-button" type="button" aria-pressed="false" title="Надиктовать запрос">Диктовка</button>
+      </div>
+      <p class="mic-status" id="mic-status" aria-live="assertive"></p>
+      {% if conversation_turn_count %}
+      <p class="session-hint">В этой вкладке агент помнит прошлые уточнения. Обновление страницы начнёт новый диалог.</p>
+      {% endif %}
+    </form>
+  </section>
+
+  <div class="chat-resizer" id="chat-resizer" role="separator" aria-orientation="vertical" aria-label="Ширина чата"></div>
+
+  <div class="globe-stage" id="globe-stage">
+    <canvas id="webgl-canvas" aria-hidden="true"></canvas>
+    <canvas id="label-canvas" aria-hidden="true"></canvas>
+  </div>
+</div>
+
+<script type="application/json" id="globe-bootstrap">{% if result %}{{ {"timeline": result.timeline, "routeTitle": result.contract.route}|tojson }}{% else %}{"timeline": [], "routeTitle": ""}{% endif %}</script>
+<script src="{{ url_for('static', path='chat.js') }}?v=15"></script>
+<script type="module" src="{{ url_for('static', path='globe.js') }}?v=16"></script>
+</body>
+</html>

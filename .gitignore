@@ -1,0 +1,27 @@
+# Local secrets and runtime state
+.env
+.env.*
+!.env.example
+!agent/.env.example
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+pytest-cache-files-*/
+*.log
+
+# Agent diagnostics and live-run artifacts (may contain local paths and raw MCP payloads)
+agent/data/
+
+# Scratch space (hackathon PDFs, drafts)
+tmp/
+
+# Editor and operating-system files
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
